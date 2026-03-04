@@ -1,38 +1,108 @@
-from fastapi import FastAPI
+"""
+Meme Bus FastAPI control plane.
+Endpoints: /healthz /readyz /queue-status /tail /drafts /published /fire-feed /spine /audio
+"""
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from bus.events import EVENT_LOG_PATH
-import json, pathlib
+import json, pathlib, os
 
-app = FastAPI(title="EVEZ Meme Bus", version="1.0.0")
+app = FastAPI(title="EVEZ Meme Bus", version="2.0.0")
+
+SPINE_LOG = pathlib.Path(os.getenv("SPINE_LOG_PATH", "../spine/fire_log.jsonl"))
+AUDIO_DIR = pathlib.Path("assets/audio")
+OUT_DIR = pathlib.Path("assets/output_memes")
+
+def _events(kind_filter=None):
+    if not EVENT_LOG_PATH.exists():
+        return []
+    evs = []
+    for l in EVENT_LOG_PATH.read_text().splitlines():
+        if not l.strip(): continue
+        try:
+            ev = json.loads(l)
+            if kind_filter is None or ev.get("kind") in kind_filter:
+                evs.append(ev)
+        except Exception:
+            pass
+    return evs
 
 @app.get("/healthz")
-def health():
-    return {"status": "ok"}
+def health(): return {"status": "ok", "version": "2.0.0"}
 
 @app.get("/readyz")
-def ready():
-    return {"status": "ready", "log": str(EVENT_LOG_PATH)}
+def ready(): return {"status": "ready", "log": str(EVENT_LOG_PATH)}
 
 @app.get("/queue-status")
 def queue_status():
-    if not EVENT_LOG_PATH.exists():
-        return {"total": 0, "by_kind": {}}
-    events = [json.loads(l) for l in EVENT_LOG_PATH.read_text().splitlines() if l.strip()]
-    counts: dict = {}
-    for ev in events:
+    evs = _events()
+    counts = {}
+    for ev in evs:
         k = ev.get("kind", "?")
         counts[k] = counts.get(k, 0) + 1
-    return {"total": len(events), "by_kind": counts}
+    return {"total": len(evs), "by_kind": counts}
 
 @app.get("/tail")
 def tail_log(n: int = 20):
-    if not EVENT_LOG_PATH.exists():
-        return {"events": []}
-    lines = EVENT_LOG_PATH.read_text().splitlines()
-    return {"events": [json.loads(l) for l in lines[-n:] if l.strip()]}
+    return {"events": _events()[-n:]}
 
 @app.get("/drafts")
 def list_drafts():
-    out = pathlib.Path("assets/output_memes")
-    if not out.exists():
-        return {"drafts": []}
-    return {"drafts": [f.name for f in out.iterdir() if f.is_file()]}
+    """List meme candidates that passed ConstitutionalGuard but haven't been posted yet."""
+    approved = _events(["MEME_APPROVED"])
+    posted_ids = {ev.get("payload", {}).get("event_id") for ev in _events(["MEME_POSTED", "MEME_PUBLISHED"])}
+    drafts = [ev for ev in approved if ev.get("id") not in posted_ids]
+    return {"count": len(drafts), "drafts": drafts[-20:]}
+
+@app.get("/published")
+def list_published():
+    """List all memes that have been posted to X or saved to output."""
+    posted = _events(["MEME_POSTED", "MEME_PUBLISHED", "MEME_RENDERED"])
+    return {"count": len(posted), "published": posted[-30:]}
+
+@app.get("/fire-feed")
+def fire_feed():
+    """Last N FIRE events ingested from the spine via FireSync."""
+    fires = _events(["FIRE_EVENT"])
+    return {
+        "count": len(fires),
+        "latest": fires[-10:],
+        "last_fire_number": fires[-1]["payload"].get("fire_number") if fires else None,
+        "last_v": fires[-1]["payload"].get("v_value") if fires else None
+    }
+
+@app.get("/spine")
+def spine_tail(n: int = 10):
+    """Tail the EVEZ-OS canonical spine (fire_log.jsonl)."""
+    if not SPINE_LOG.exists():
+        return {"entries": [], "note": "spine not found at " + str(SPINE_LOG)}
+    lines = [l for l in SPINE_LOG.read_text().splitlines() if l.strip()]
+    entries = []
+    for l in lines[-n:]:
+        try: entries.append(json.loads(l))
+        except: pass
+    return {"count": len(lines), "tail": entries}
+
+@app.get("/audio")
+def list_audio():
+    """List generated audio narrations."""
+    if not AUDIO_DIR.exists():
+        return {"files": []}
+    files = sorted(AUDIO_DIR.glob("*.mp3"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return {"count": len(files), "files": [str(f) for f in files[:20]]}
+
+@app.get("/audio/{filename}")
+def serve_audio(filename: str):
+    """Stream an audio narration file."""
+    path = AUDIO_DIR / filename
+    if not path.exists() or path.suffix != ".mp3":
+        raise HTTPException(status_code=404, detail="file not found")
+    return FileResponse(str(path), media_type="audio/mpeg")
+
+@app.get("/meme/{filename}")
+def serve_meme(filename: str):
+    """Serve a rendered meme image."""
+    path = OUT_DIR / filename
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="file not found")
+    return FileResponse(str(path), media_type="image/jpeg")
