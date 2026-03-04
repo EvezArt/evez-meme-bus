@@ -1,40 +1,32 @@
-"""Publisher — moves approved rendered memes to drafts/, optionally posts to X."""
-import os, pathlib, shutil
+import shutil, pathlib, time
 from bus.events import subscribe, emit_event, Event
 
-DRAFTS_DIR = pathlib.Path("assets/drafts")
-AUTO_POST = os.environ.get("MEME_AUTO_POST", "false").lower() == "true"
+OUT = pathlib.Path("assets/output_memes")
 
 def handle_event(ev: Event):
-    if ev.domain == "meme" and ev.kind == "MEME_RENDERED":
-        out_path = ev.payload.get("output_path", "")
-        if out_path.startswith("RENDER_FAILED"):
-            return
-
-        # Always save to drafts
-        DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
-        draft_path = DRAFTS_DIR / pathlib.Path(out_path).name
-        shutil.copy2(out_path, draft_path)
-
-        if AUTO_POST:
-            _post_to_twitter(ev.payload["caption"], str(draft_path))
+    if ev.domain == "ethics" and ev.kind == "MEME_APPROVED":
+        src = pathlib.Path(ev.payload.get("image_path", ""))
+        caption = ev.payload.get("caption", "")
+        OUT.mkdir(parents=True, exist_ok=True)
+        if src.exists():
+            dst = OUT / src.name
+            shutil.copy2(src, dst)
+            (OUT / (src.stem + ".txt")).write_text(caption, encoding="utf-8")
+            emit_event("publish", "MEME_PUBLISHED",
+                {"output_path": str(dst), "caption": caption},
+                {"source_agent": "Publisher"})
+            print(f"[Publisher] published {dst}")
         else:
-            emit_event(
-                domain="publish",
-                kind="MEME_DRAFT_SAVED",
-                payload={**ev.payload, "draft_path": str(draft_path)},
-                meta={"source_agent": "Publisher"}
-            )
-
-def _post_to_twitter(caption: str, image_path: str):
-    """Post meme to Twitter via Composio TWITTER_CREATION_OF_A_POST."""
-    # Wired via external agent call — see scripts/post_meme.py
-    emit_event(
-        domain="publish",
-        kind="MEME_QUEUED_FOR_POST",
-        payload={"caption": caption, "image_path": image_path},
-        meta={"source_agent": "Publisher"}
-    )
+            draft = OUT / f"draft_{ev.payload.get('slot','unknown')}.txt"
+            with draft.open("a", encoding="utf-8") as f:
+                f.write(caption + "\n")
+            print(f"[Publisher] caption draft saved: {caption[:60]}")
 
 def start():
     subscribe(handle_event)
+
+if __name__ == "__main__":
+    start()
+    print("[Publisher] ready...")
+    while True:
+        time.sleep(60)

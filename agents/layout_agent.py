@@ -1,68 +1,48 @@
-"""Composites captions onto images using Pillow. Emits MEME_RENDERED."""
-import pathlib
+import pathlib, time, textwrap
 from bus.events import subscribe, emit_event, Event
 
-OUTPUT_DIR = pathlib.Path("assets/output_memes")
+OUT = pathlib.Path("assets/output_memes")
 
 def _render(image_path: str, caption: str, slot: str) -> str:
-    """Render caption onto image and return output path."""
     try:
         from PIL import Image, ImageDraw, ImageFont
-        img = Image.open(image_path).convert("RGB")
+        img = Image.open(image_path).convert("RGBA")
         draw = ImageDraw.Draw(img)
-        W, H = img.size
-
-        # Try to load a bold font, fall back to default
+        w, h = img.size
+        font_size = max(20, w // 25)
         try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", size=max(24, W // 25))
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
         except Exception:
             font = ImageFont.load_default()
-
-        # Word-wrap caption
-        words = caption.split()
-        lines, line = [], ""
-        for word in words:
-            test = f"{line} {word}".strip()
-            bbox = draw.textbbox((0, 0), test, font=font)
-            if bbox[2] > W - 40:
-                if line:
-                    lines.append(line)
-                line = word
-            else:
-                line = test
-        if line:
-            lines.append(line)
-
-        # Draw bottom caption with black outline + white fill
-        text_block = "\n".join(lines)
-        bbox = draw.multiline_textbbox((0, 0), text_block, font=font)
-        text_h = bbox[3] - bbox[1]
-        y = H - text_h - 20
-        for dx, dy in [(-2,0),(2,0),(0,-2),(0,2)]:
-            draw.multiline_text((20 + dx, y + dy), text_block, font=font, fill="black", align="center")
-        draw.multiline_text((20, y), text_block, font=font, fill="white", align="center")
-
-        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        wrapped = "\n".join(textwrap.wrap(caption, width=40))
+        draw.rectangle([0, h - font_size * 3, w, h], fill=(0, 0, 0, 180))
+        draw.text((10, h - font_size * 3 + 4), wrapped, font=font, fill=(255, 255, 255, 255))
+        OUT.mkdir(parents=True, exist_ok=True)
         stem = pathlib.Path(image_path).stem
-        out_path = OUTPUT_DIR / f"{stem}_{slot[:20]}.jpg"
-        img.save(str(out_path), "JPEG", quality=92)
+        out_path = OUT / f"{stem}_{slot}.png"
+        img.save(out_path)
         return str(out_path)
     except Exception as e:
-        return f"RENDER_FAILED:{e}"
+        print(f"[LayoutAgent] render error: {e}")
+        return ""
 
 def handle_event(ev: Event):
     if ev.domain == "ethics" and ev.kind == "MEME_APPROVED":
-        out_path = _render(
-            ev.payload["image_path"],
-            ev.payload["caption"],
-            ev.payload.get("slot", "MEME")
-        )
-        emit_event(
-            domain="meme",
-            kind="MEME_RENDERED",
-            payload={**ev.payload, "output_path": out_path},
-            meta={"source_agent": "LayoutAgent"}
-        )
+        image_path = ev.payload.get("image_path", "")
+        caption = ev.payload.get("caption", "")
+        slot = ev.payload.get("slot", "unknown")
+        out = _render(image_path, caption, slot)
+        if out:
+            emit_event("meme", "MEME_RENDERED",
+                {"output_path": out, "caption": caption, "slot": slot},
+                {"source_agent": "LayoutAgent"})
+            print(f"[LayoutAgent] rendered {out}")
 
 def start():
     subscribe(handle_event)
+
+if __name__ == "__main__":
+    start()
+    print("[LayoutAgent] ready...")
+    while True:
+        time.sleep(60)

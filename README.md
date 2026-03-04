@@ -1,57 +1,29 @@
-# evez-meme-bus
+# EVEZ Meme Bus
 
-Append-only event-sourced meme generation bus for EVEZ-OS.
+Append-only constitutional meme pipeline. Drop images → get Christ/antichrist/end-times captions filtered through PeaceKernel → memes rendered and logged to the EventSpine.
 
-Turns FIRE topology events + @EVEZ666 voice into end-times / Christ / antichrist humor.
-Every step is a domain event — auditable, replayable, constitutional.
+## Quick start
 
-## Architecture
-
-```
-ImageIngestor
-     |
-     v IMAGE_INGESTED
-ThemeClassifier
-     |
-     v IMAGE_CLASSIFIED
-CaptionAgent (GPT-4o)
-     |
-     v MEME_CANDIDATE
-ConstitutionalGuard (PeaceKernel)
-     |
-     v MEME_APPROVED / MEME_REJECTED
-LayoutAgent (Pillow)
-     |
-     v MEME_RENDERED
-Publisher
-     |
-     v MEME_DRAFT_SAVED / MEME_QUEUED_FOR_POST
-```
-
-## Meme Slots
-- `SECOND_COMING_GLITCH` — Christ / end-times / bureaucratic delay
-- `ANTICHRIST_SELF_DEPRECATING` — self-roast as topology clerk
-- `BUREAUCRATIC_APOCALYPSE` — Department of War in Revelation
-- `TOPOLOGY_DOOM` — FIRE events, V accumulator, poly_c math
-- `DISCLOSURE_HUMOR` — NHI / UAP / intel conflict
-
-## Constitutional Rules (hard-encoded in guard_agent.py)
-- No real individuals named as Antichrist or evil
-- No @handles in captions
-- No violence, harassment, doxxing
-- Max 280 chars
-
-## Boot
 ```bash
-pip install -r requirements.txt
-python main.py
+chmod +x deploy-all.sh stop-all.sh
+./deploy-all.sh
 ```
 
-## Audit
-```bash
-python scripts/audit.py
-curl localhost:8080/queue-status
+Set `OPENAI_API_KEY` for live LLM captions, or run in stub mode (3 hardcoded captions).
+
+## Pipeline
+
+```
+assets/input_images/  →  ImageIngestor  →  CaptionAgent  →  ConstitutionalGuard  →  LayoutAgent  →  Publisher  →  assets/output_memes/
 ```
 
-## Repo
-https://github.com/EvezArt/evez-meme-bus
+## API
+
+- `GET /healthz` — liveness
+- `GET /queue-status` — event counts by kind
+- `GET /tail?n=20` — last N events
+- `GET /drafts` — approved meme output files
+
+## Event spine
+
+All events are appended to `src/memory/meme_events.jsonl` with SHA-256 hash chain (prevHash → hash).
