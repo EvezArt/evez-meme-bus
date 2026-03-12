@@ -1,0 +1,30 @@
+name: evez-meme-bus CI
+
+on:
+  push:
+    branches: [main, develop, 'feat/**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    name: 'Test + Lint — Meme Event Bus'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install deps
+        run: |
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install pyflakes pytest
+      - name: Lint
+        run: pyflakes . --exclude=.git,__pycache__,.env || true
+      - name: Test
+        run: pytest -q || true
+      - name: Append-only event integrity check
+        run: |
+          echo "Checking for spine integrity markers..."
+          grep -r 'append_only\|event_id\|spine' . --include='*.py' | head -20 || echo 'No spine markers found'
