@@ -2,12 +2,12 @@ name: Meme Bus Heartbeat
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '0 12 * * *'
   workflow_dispatch:
 
 jobs:
   bus-cycle:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
     permissions:
       contents: write
     steps:
